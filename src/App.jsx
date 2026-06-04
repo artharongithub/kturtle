@@ -88,7 +88,8 @@ function parseProgram(code) {
     const stmts = [];
     while (pos < lines.length) {
       const line = peek();
-      if (line === "}") { consume(); break; }
+      // stop on "}" alone or "} else {" — if-handler checks which one
+      if (line === "}" || line.match(/^\}\s*else\s*\{?$/)) { break; }
       stmts.push(parseStatement());
     }
     return stmts;
@@ -101,6 +102,7 @@ function parseProgram(code) {
     const repeatM = line.match(/^repeat\s+(.+?)\s*\{?$/);
     if (repeatM) {
       const body = parseBlock();
+      consume(); // consume "}"
       return { type: "repeat", count: repeatM[1], body };
     }
 
@@ -109,9 +111,11 @@ function parseProgram(code) {
     if (ifM) {
       const thenBody = parseBlock();
       let elseBody = [];
-      if (peek() && peek().match(/^else\s*\{?$/)) {
-        consume();
+      const closing = peek();
+      consume(); // consume "}" or "} else {"
+      if (closing && closing.match(/^\}\s*else\s*\{?$/)) {
         elseBody = parseBlock();
+        consume(); // consume final "}"
       }
       return { type: "if", cond: ifM[1], thenBody, elseBody };
     }
@@ -261,6 +265,23 @@ export default function KTurtle() {
   const [error, setError]     = useState(null);
   const [running, setRunning] = useState(false);
   const [inserted, setInserted] = useState(null);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener("beforeinstallprompt", handler);
+    window.addEventListener("appinstalled", () => setInstalled(true));
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === "accepted") setInstalled(true);
+    setInstallPrompt(null);
+  };
 
   const setupCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -378,6 +399,11 @@ export default function KTurtle() {
       pointerEvents: visible ? "auto" : "none",
       zIndex: visible ? 1 : 0,
     }),
+    scroll: {
+      flex: 1, overflowY: "auto", overflowX: "hidden",
+      WebkitOverflowScrolling: "touch",
+      padding: "16px 14px",
+    },
     tabBar: {
       display: "flex", borderTop: "1px solid #1a1a3a",
       background: "#0a0a1a", flexShrink: 0,
@@ -415,6 +441,18 @@ export default function KTurtle() {
         }}>
           {running ? "⟳ ..." : "▶ RUN"}
         </button>
+        {installPrompt && !installed && (
+          <button onClick={handleInstall} style={{
+            background: "#1a003a", color: "#cc88ff",
+            border: "1px solid #cc88ff55",
+            padding: "6px 12px", borderRadius: "4px",
+            fontSize: "11px", cursor: "pointer",
+            fontFamily: "inherit", letterSpacing: "0.5px",
+            boxShadow: "0 0 8px #cc88ff22",
+          }}>
+            ⬇ Установить
+          </button>
+        )}
       </div>
 
       <div style={S.content}>
@@ -461,27 +499,30 @@ export default function KTurtle() {
         </div>
 
         {/* EXAMPLES */}
-        <div style={{ ...S.pane(tab === "examples"), overflowY: "auto", padding: "16px 14px", gap: "10px" }}>
-          <div style={{ fontSize: "11px", color: "#4444aa", letterSpacing: "2px", marginBottom: "6px" }}>ПРИМЕРЫ</div>
+        <div style={S.pane(tab === "examples")}>
+          <div style={S.scroll}>
+          <div style={{ fontSize: "11px", color: "#4444aa", letterSpacing: "2px", marginBottom: "12px" }}>ПРИМЕРЫ</div>
           {EXAMPLES.map(ex => (
-            <div key={ex.name} style={{ background: "#0d0d22", border: "1px solid #1a1a3a", borderRadius: "8px", overflow: "hidden", marginBottom: "10px" }}>
+            <div key={ex.name} style={{ background: "#0d0d22", border: "1px solid #1a1a3a", borderRadius: "8px", overflow: "hidden", marginBottom: "12px", flexShrink: 0 }}>
               <div style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderBottom: "1px solid #1a1a3a" }}>
                 <span style={{ flex: 1, color: "#aabbff", fontSize: "14px", fontWeight: "bold" }}>{ex.name}</span>
                 <button onClick={() => { setCode(ex.code); setTab("code"); }}
-                  style={{ background: "#003322", color: "#00d4ff", border: "1px solid #00d4ff44", padding: "5px 12px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" }}>
+                  style={{ background: "#003322", color: "#00d4ff", border: "1px solid #00d4ff44", padding: "5px 12px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
                   Загрузить
                 </button>
               </div>
-              <pre style={{ margin: 0, padding: "10px 14px", fontSize: "11px", color: "#6688bb", lineHeight: "1.6", overflowX: "auto" }}>
+              <pre style={{ margin: 0, padding: "10px 14px", fontSize: "11px", color: "#6688bb", lineHeight: "1.6", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                 {ex.code}
               </pre>
             </div>
           ))}
           <div style={{ height: "20px" }} />
+          </div>
         </div>
 
         {/* HELP */}
-        <div style={{ ...S.pane(tab === "help"), overflowY: "auto", padding: "16px 14px", gap: "8px" }}>
+        <div style={S.pane(tab === "help")}>
+          <div style={S.scroll}>
           <div style={{ fontSize: "11px", color: "#4444aa", letterSpacing: "2px", marginBottom: "8px" }}>КОМАНДЫ — нажми чтобы вставить</div>
           {COMMANDS.map(({ cmd, desc }) => (
             <div key={cmd} onClick={() => insertCmd(cmd)} style={{
@@ -511,6 +552,7 @@ repeat 10 {
 }`}</pre>
           </div>
           <div style={{ height: "20px" }} />
+          </div>
         </div>
 
       </div>
